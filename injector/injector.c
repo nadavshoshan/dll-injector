@@ -1,56 +1,22 @@
-#include <Windows.h>
-#include <stdio.h>
-#include<stdlib.h>
-#include <tlhelp32.h>
-#include <string.h>
+#include "injector.h"
+#define MyDll "C:\\Users\\Balmas\\Desktop\\dll-play\\Debug\\dll_play.dll"
+#define MyDll64 "C:\\Users\\Balmas\\Desktop\\dll-play\\x64\\Debug\\dll_play.dll"
+
+
 int findProcessId(wchar_t* name);
-//char* ascii_to_utf8(unsigned char c);
-int main(int argc, char* argv[]);
-//char* concat(const char* s1, const char* s2);
+int wmain(int argc, wchar_t* argv[]);
+int injection(int process_id);
+
 
 int wmain(int argc, wchar_t* argv[]) {
 	wchar_t* processName = argv[1];
-	char* dllPath = argv[2];
-	printf("%s\n", processName);
-	char* utf_process_name="";
-	int i;
-	for (i = 0; i < strlen(processName); i++) {
-		utf_process_name = concat(ascii_to_utf8(processName[i]), utf_process_name);
+	int id = findProcessId(processName);
+	printf_s("path id of %ls is: %d\n", processName ,id);
+	if (injection(id)) {
+		printf("the given DLL was injected to %ls\n", processName);
 	}
-	int id = findProcessId(utf_process_name);
-	printf("path id of %s is: %d\n", processName ,id);
 	return 0;
 }
-//
-//char* concat(const char* s1, const char* s2)
-//{
-//	char* result = malloc(strlen(s1) + strlen(s2) + 1); // +1 for the null-terminator
-//	// in real code you would check for errors in malloc here
-//	strcpy(result, s1);
-//	strcat(result, s2);
-//	return result;
-//}
-//
-//char* ascii_to_utf8(unsigned char c)
-//{
-//	unsigned char* out;
-//
-//	if (c < 128)
-//	{
-//		out = (char*)calloc(2, sizeof(char));
-//		out[0] = c;
-//		out[1] = '\0';
-//	}
-//	else
-//	{
-//		out = (char*)calloc(3, sizeof(char));
-//		out[1] = (c >> 6) | 0xC0;
-//		out[0] = (c & 0x3F) | 0x80;
-//		out[2] = '\0';
-//	}
-//
-//	return out;
-//}
 
 int findProcessId(wchar_t* name) {
 
@@ -61,7 +27,7 @@ int findProcessId(wchar_t* name) {
 		//get all the running processes into snap!
 		HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
 		if (snap == INVALID_HANDLE_VALUE) {
-			printf("%s", GetLastError());
+			printf_s("%lc", GetLastError());
 		}
 
 		// Declare a PROCESSENTRY32 variable
@@ -71,7 +37,7 @@ int findProcessId(wchar_t* name) {
 
 
 		if (!Process32First(snap, &pe32)) {
-			printf("%s", GetLastError());
+			printf_s("%lc", GetLastError());
 			CloseHandle(snap);          // clean the snapshot object
 		}
 		// Cycle through Process List
@@ -88,9 +54,50 @@ int findProcessId(wchar_t* name) {
 		} while (Process32Next(snap, &pe32));
 
 		// close the snapshot 
-		CloseHandle(snap);
+		if (!snap) {
+			CloseHandle(snap);
+		}
 		Sleep(100);
 	}
 
 	return process_id;
 }
+
+int injection(int process_id) {
+	int toReturn = 1;
+	DWORD size = (strlen(MyDll) + 1) * sizeof(wchar_t);
+
+	HANDLE hToPrc = OpenProcess(PROCESS_ALL_ACCESS, FALSE, process_id);
+	if (!hToPrc) {
+		printf("couldn't get a handle to the given procces");
+		toReturn = 0;
+	}
+	LPVOID dllPathAdress = VirtualAllocEx(hToPrc, 0, size, MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+	if (!dllPathAdress) {
+		printf("couldn't allocate memory in the target heap");
+		toReturn = 0;
+	}
+	int res = WriteProcessMemory(hToPrc, dllPathAdress, MyDll, size, NULL);
+	if (!res) {
+		printf("couldn't write to the target heap");
+		toReturn = 0;
+	}
+	FARPROC loadLibAadress = GetProcAddress(GetModuleHandleA("kernel32.dll"), "LoadLibraryA");
+	if (!loadLibAadress) {
+		printf_s("%lc", GetLastError());
+		toReturn = 0;
+	}
+
+	HANDLE nThread = CreateRemoteThread(hToPrc, NULL, 0, (LPTHREAD_START_ROUTINE)loadLibAadress, dllPathAdress, 0, NULL);
+	if (!nThread) {
+		printf("couldn't get a handle to the new remote thread");
+		toReturn = 0;
+	}
+
+	res = WaitForSingleObject(nThread, INFINITE);
+
+	CloseHandle(hToPrc);
+
+	return toReturn;
+}
+
